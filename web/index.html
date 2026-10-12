@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HF Dataset Loader for IRIS</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#fff; --ink:#1b1f24; --muted:#5f6b7a; --line:#e3e6ea;
+    --accent:#2b5bd7; --accent-ink:#fff; --ok:#1f8a4c; --err:#c23b2a; --chip:#eef2fb;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  header{background:#14213d;color:#fff;padding:14px 28px;display:flex;align-items:center;gap:12px}
+  header .logo{font-size:22px}
+  header h1{font-size:17px;margin:0;font-weight:600}
+  header span{color:#aeb9d0;font-size:13px}
+  main{max-width:1100px;margin:24px auto;padding:0 20px;display:grid;grid-template-columns:380px 1fr;gap:20px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px 20px}
+  .card h2{font-size:14px;margin:0 0 14px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+  label{display:block;font-weight:600;margin:12px 0 5px;font-size:13px}
+  input,select{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:6px;font:inherit;background:#fff}
+  .row{display:flex;gap:8px}
+  .row>*{flex:1}
+  button{padding:9px 14px;border-radius:6px;border:1px solid var(--line);background:#fff;font:inherit;font-weight:600;cursor:pointer}
+  button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);width:100%;margin-top:18px}
+  button:disabled{opacity:.6;cursor:wait}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+  .chip{background:var(--chip);border:1px solid #d6def3;border-radius:999px;padding:2px 10px;font-size:12px;cursor:pointer}
+  .chip.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .hint{color:var(--muted);font-size:12px;margin-top:4px}
+  .code{font-family:var(--mono);font-size:12px;background:#0f172a;color:#d6e2ff;padding:10px 12px;border-radius:6px;white-space:pre-wrap;overflow-wrap:anywhere;margin-top:14px}
+  .result{border-left:4px solid var(--ok);background:#f2faf5;padding:10px 14px;border-radius:6px;margin-bottom:16px}
+  .result.err{border-color:var(--err);background:#fdf3f2}
+  .result b{font-size:15px}
+  .stats{display:flex;gap:22px;margin-top:6px;color:var(--muted);font-size:13px}
+  .stats strong{color:var(--ink);font-size:16px;display:block}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--muted);font-weight:600;font-size:12px;background:#fafbfc}
+  td.mono{font-family:var(--mono);font-size:12px}
+  .badge{font-size:11px;font-weight:700;padding:1px 7px;border-radius:4px}
+  .badge.OK{background:#e3f4ea;color:var(--ok)} .badge.ERROR{background:#fbe6e3;color:var(--err)}
+  .link{color:var(--accent);cursor:pointer;font-weight:600}
+  .preview{overflow:auto;max-height:420px;margin-top:6px}
+  .preview td{max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .types{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 2px}
+  .type{font-family:var(--mono);font-size:11px;background:#f1f3f6;border-radius:4px;padding:2px 7px}
+  .stack{display:flex;flex-direction:column;gap:20px}
+  .empty{color:var(--muted);padding:12px 0}
+  @media (max-width:860px){main{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">🤗</div>
+  <h1>Hugging Face → IRIS</h1>
+  <span>Load any public dataset into an IRIS table</span>
+</header>
+
+<main>
+  <section class="card">
+    <h2>Import dataset</h2>
+    <label for="dataset">Dataset id</label>
+    <div class="row">
+      <input id="dataset" placeholder="e.g. stanfordnlp/imdb" value="stanfordnlp/imdb" style="flex:3">
+      <button id="check" type="button">Check</button>
+    </div>
+    <div id="cfgBox" hidden>
+      <label>Config</label><div class="chips" id="configs"></div>
+      <label>Split</label><div class="chips" id="splits"></div>
+    </div>
+    <label for="table">Target table</label>
+    <input id="table" placeholder="Schema.Table (default HF.&lt;name&gt;)" value="Demo.IMDB">
+    <div class="row">
+      <div><label for="limit">Row limit</label><input id="limit" type="number" min="0" value="1000"><div class="hint">0 = all rows</div></div>
+      <div><label for="mode">If table exists</label>
+        <select id="mode"><option value="replace">Replace</option><option value="append">Append</option><option value="fail">Fail</option></select></div>
+    </div>
+    <button class="primary" id="go">Import into IRIS</button>
+    <div class="code" id="oneliner"></div>
+  </section>
+
+  <div class="stack">
+    <section class="card" id="resultCard" hidden>
+      <h2>Last import</h2>
+      <div id="result"></div>
+    </section>
+    <section class="card" id="previewCard" hidden>
+      <h2 id="previewTitle">Preview</h2>
+      <div class="preview" id="preview"></div>
+    </section>
+    <section class="card">
+      <h2>Import history</h2>
+      <div id="history"><div class="empty">No imports yet.</div></div>
+    </section>
+  </div>
+</main>
+
+<script>
+const API = "/api/hf2iris";
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+let cfg = "", split = "train";
+
+function oneLiner(){
+  const a = [`"${$("dataset").value}"`, `"${$("table").value}"`, `"${split}"`, $("limit").value || 0];
+  const c = cfg && cfg !== "default" ? cfg : "";
+  if (c || $("mode").value !== "replace") a.push(`"${c}"`);
+  if ($("mode").value !== "replace") a.push(`"${$("mode").value}"`);
+  $("oneliner").textContent = `do ##class(dc.hf2iris.Loader).Load(${a.join(",")})`;
+}
+["dataset","table","limit","mode"].forEach(id => $(id).addEventListener("input", oneLiner));
+
+async function api(path, opts){
+  const r = await fetch(API + path, opts);
+  const j = await r.json().catch(() => ({error: r.statusText}));
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+
+function chips(el, items, current, pick){
+  el.innerHTML = items.map(v => `<span class="chip ${v===current?"on":""}" data-v="${esc(v)}">${esc(v)}</span>`).join("");
+  el.querySelectorAll(".chip").forEach(c => c.onclick = () => pick(c.dataset.v));
+}
+
+$("check").onclick = async () => {
+  $("check").disabled = true; $("check").textContent = "…";
+  try {
+    const info = await api("/info?dataset=" + encodeURIComponent($("dataset").value));
+    const names = Object.keys(info.configs);
+    const showCfg = name => {
+      cfg = name;
+      chips($("configs"), names, cfg, showCfg);
+      const sp = Array.isArray(info.configs[name]) ? info.configs[name] : [];
+      if (!sp.includes(split)) split = sp[0] || "train";
+      chips($("splits"), sp, split, s => { split = s; showCfg(cfg); });
+      oneLiner();
+    };
+    showCfg(names[0]);
+    $("cfgBox").hidden = false;
+  } catch(e) { alert(e.message); }
+  $("check").disabled = false; $("check").textContent = "Check";
+};
+
+$("go").onclick = async () => {
+  $("go").disabled = true; $("go").textContent = "Importing…";
+  $("resultCard").hidden = false;
+  $("result").innerHTML = `<div class="empty">Downloading from Hugging Face and loading into IRIS…</div>`;
+  try {
+    const r = await api("/load", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({dataset:$("dataset").value, table:$("table").value, split,
+        config: cfg === "default" ? "" : cfg, limit: +$("limit").value, mode:$("mode").value})});
+    showResult(r);
+    loadPreview(r.table);
+  } catch(e) {
+    $("result").innerHTML = `<div class="result err"><b>Import failed</b><div>${esc(e.message)}</div></div>`;
+  }
+  $("go").disabled = false; $("go").textContent = "Import into IRIS";
+  loadHistory();
+};
+
+function showResult(r){
+  const types = Object.entries(r.columns).map(([c,t]) => `<span class="type">${esc(c)} · ${esc(t)}</span>`).join("");
+  $("result").innerHTML = `<div class="result"><b>✓ ${esc(r.table)}</b> created from <b>${esc(r.dataset)}</b> (${esc(r.split)})
+    <div class="stats"><div><strong>${(+r.rows).toLocaleString()}</strong>rows</div>
+    <div><strong>${Object.keys(r.columns).length}</strong>columns</div>
+    <div><strong>${r.seconds}s</strong>load time</div></div></div>
+    <div class="hint">Column types</div><div class="types">${types}</div>`;
+}
+
+async function loadPreview(table){
+  try {
+    const p = await api("/preview/" + encodeURIComponent(table) + "?rows=20");
+    $("previewCard").hidden = false;
+    $("previewTitle").textContent = `Preview · ${p.table} · ${(+p.total).toLocaleString()} rows`;
+    $("preview").innerHTML = `<table><tr>${p.columns.map(c=>`<th>${esc(c)}</th>`).join("")}</tr>` +
+      p.rows.map(r => `<tr>${r.map(v=>`<td title="${esc(v)}">${esc(v)}</td>`).join("")}</tr>`).join("") + `</table>`;
+  } catch(e) { /* preview is optional */ }
+}
+
+async function loadHistory(){
+  try {
+    const h = await api("/history");
+    if (!h.length) return;
+    $("history").innerHTML = `<table><tr><th>When</th><th>Dataset</th><th>Split</th><th>Table</th><th>Rows</th><th>Time</th><th></th></tr>` +
+      h.map(x => `<tr><td>${esc(x.createdAt)}</td><td class="mono">${esc(x.dataset)}</td><td>${esc(x.split)}</td>
+        <td>${x.status==="OK" ? `<span class="link" data-t="${esc(x.table)}">${esc(x.table)}</span>` : esc(x.table)}</td>
+        <td>${x.rows ? (+x.rows).toLocaleString() : "—"}</td><td>${x.seconds ? x.seconds+"s" : "—"}</td>
+        <td><span class="badge ${x.status}" title="${esc(x.message)}">${x.status}</span></td></tr>`).join("") + `</table>`;
+    $("history").querySelectorAll(".link").forEach(l => l.onclick = () => loadPreview(l.dataset.t));
+  } catch(e) {}
+}
+
+oneLiner(); loadHistory();
+</script>
+</body>
+</html>
