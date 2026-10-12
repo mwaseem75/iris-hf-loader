@@ -39,7 +39,7 @@
   table{width:100%;border-collapse:collapse;font-size:13px}
   th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
   th{color:var(--muted);font-weight:600;font-size:12px;background:#fafbfc}
-  td.mono{font-family:var(--mono);font-size:12px}
+  .mono{font-family:var(--mono);font-size:12px}
   .badge{font-size:11px;font-weight:700;padding:1px 7px;border-radius:4px}
   .badge.OK{background:#e3f4ea;color:var(--ok)} .badge.ERROR{background:#fbe6e3;color:var(--err)}
   .link{color:var(--accent);cursor:pointer;font-weight:600}
@@ -49,15 +49,32 @@
   .type{font-family:var(--mono);font-size:11px;background:#f1f3f6;border-radius:4px;padding:2px 7px}
   .stack{display:flex;flex-direction:column;gap:20px}
   .empty{color:var(--muted);padding:12px 0}
+  #login{position:fixed;inset:0;background:rgba(20,33,61,.55);display:flex;align-items:center;justify-content:center}
+  #login[hidden]{display:none}
+  #login form{width:320px}
+  #loginErr{color:var(--err);font-size:13px;margin-top:10px}
+  header .user{margin-left:auto;font-size:13px}
+  header .user .link{color:#aeb9d0}
   @media (max-width:860px){main{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
 <header>
-  <div class="logo">🤗</div>
-  <h1>Hugging Face → IRIS</h1>
+  <div class="logo">&#x1F917;</div>
+  <h1>Hugging Face &#x2192; IRIS</h1>
   <span>Load any public dataset into an IRIS table</span>
+  <div class="user" id="userBox" hidden><span id="userName"></span> &#xB7; <span class="link" id="logout">Sign out</span></div>
 </header>
+
+<div id="login" hidden>
+  <form class="card" id="loginForm">
+    <h2>Sign in to IRIS</h2>
+    <label for="user">Username</label><input id="user" autocomplete="username" value="_SYSTEM">
+    <label for="pass">Password</label><input id="pass" type="password" autocomplete="current-password">
+    <div id="loginErr"></div>
+    <button class="primary" type="submit">Sign in</button>
+  </form>
+</div>
 
 <main>
   <section class="card">
@@ -74,10 +91,13 @@
     <label for="table">Target table</label>
     <input id="table" placeholder="Schema.Table (default HF.&lt;name&gt;)" value="Demo.IMDB">
     <div class="row">
-      <div><label for="limit">Row limit</label><input id="limit" type="number" min="0" value="1000"><div class="hint">0 = all rows</div></div>
+      <div><label for="limit">Row limit</label><input id="limit" type="number" min="0" value="1000"><div class="hint">0 = all rows (up to 1M rows / 500 MB)</div></div>
       <div><label for="mode">If table exists</label>
         <select id="mode"><option value="replace">Replace</option><option value="append">Append</option><option value="fail">Fail</option></select></div>
     </div>
+    <label for="revision">Revision <span class="hint">(optional)</span></label>
+    <input id="revision" placeholder="branch, tag or commit hash (default: latest)">
+    <div class="hint">A 40-character commit hash pins the data, so the same import always gives the same rows.</div>
     <button class="primary" id="go">Import into IRIS</button>
     <div class="code" id="oneliner"></div>
   </section>
@@ -106,18 +126,52 @@ let cfg = "", split = "train";
 
 function oneLiner(){
   const a = [`"${$("dataset").value}"`, `"${$("table").value}"`, `"${split}"`, $("limit").value || 0];
-  const c = cfg && cfg !== "default" ? cfg : "";
-  if (c || $("mode").value !== "replace") a.push(`"${c}"`);
-  if ($("mode").value !== "replace") a.push(`"${$("mode").value}"`);
+  const c = cfg && cfg !== "default" ? cfg : "", m = $("mode").value, rev = $("revision").value.trim();
+  if (c || m !== "replace" || rev) a.push(`"${c}"`);
+  if (m !== "replace" || rev) a.push(`"${m}"`);
+  if (rev) a.push(`"${rev}"`);
   $("oneliner").textContent = `do ##class(dc.hf2iris.Loader).Load(${a.join(",")})`;
 }
-["dataset","table","limit","mode"].forEach(id => $(id).addEventListener("input", oneLiner));
+["dataset","table","limit","mode","revision"].forEach(id => $(id).addEventListener("input", oneLiner));
 
-async function api(path, opts){
-  const r = await fetch(API + path, opts);
-  const j = await r.json().catch(() => ({error: r.statusText}));
-  if (!r.ok) throw new Error(j.error || r.statusText);
-  return j;
+// The API's 401 has no WWW-Authenticate header, so the browser never prompts: ask here.
+let pendingLogin = null;
+function login(msg){
+  if (!pendingLogin) pendingLogin = new Promise(resolve => {
+    $("loginErr").textContent = msg || "";
+    $("login").hidden = false;
+    $("pass").value = ""; $("pass").focus();
+    $("loginForm").onsubmit = e => {
+      e.preventDefault();
+      const user = $("user").value;
+      sessionStorage.setItem("hf2iris.auth", btoa(unescape(encodeURIComponent(user + ":" + $("pass").value))));
+      sessionStorage.setItem("hf2iris.user", user);
+      $("login").hidden = true; pendingLogin = null; showUser();
+      resolve();
+    };
+  });
+  return pendingLogin;
+}
+function showUser(){
+  const u = sessionStorage.getItem("hf2iris.user");
+  $("userBox").hidden = !u; $("userName").textContent = u || "";
+}
+$("logout").onclick = () => { sessionStorage.clear(); showUser(); login(); };
+
+async function api(path, opts = {}){
+  for (let attempt = 0; ; attempt++) {
+    const auth = sessionStorage.getItem("hf2iris.auth");
+    const headers = {...(opts.headers || {}), ...(auth ? {Authorization: "Basic " + auth} : {})};
+    const r = await fetch(API + path, {...opts, headers});
+    if (r.status === 401 && attempt < 3) {
+      sessionStorage.removeItem("hf2iris.auth");
+      await login(auth ? "Wrong username or password." : "");
+      continue;
+    }
+    const j = await r.json().catch(() => ({error: r.statusText}));
+    if (!r.ok) throw new Error(j.error || r.statusText);
+    return j;
+  }
 }
 
 function chips(el, items, current, pick){
@@ -126,7 +180,7 @@ function chips(el, items, current, pick){
 }
 
 $("check").onclick = async () => {
-  $("check").disabled = true; $("check").textContent = "…";
+  $("check").disabled = true; $("check").textContent = "\u2026";
   try {
     const info = await api("/info?dataset=" + encodeURIComponent($("dataset").value));
     const names = Object.keys(info.configs);
@@ -145,13 +199,14 @@ $("check").onclick = async () => {
 };
 
 $("go").onclick = async () => {
-  $("go").disabled = true; $("go").textContent = "Importing…";
+  $("go").disabled = true; $("go").textContent = "Importing\u2026";
   $("resultCard").hidden = false;
-  $("result").innerHTML = `<div class="empty">Downloading from Hugging Face and loading into IRIS…</div>`;
+  $("result").innerHTML = `<div class="empty">Downloading from Hugging Face and loading into IRIS\u2026</div>`;
   try {
     const r = await api("/load", {method:"POST", headers:{"Content-Type":"application/json"},
       body: JSON.stringify({dataset:$("dataset").value, table:$("table").value, split,
-        config: cfg === "default" ? "" : cfg, limit: +$("limit").value, mode:$("mode").value})});
+        config: cfg === "default" ? "" : cfg, limit: +$("limit").value, mode:$("mode").value,
+        revision: $("revision").value.trim()})});
     showResult(r);
     loadPreview(r.table);
   } catch(e) {
@@ -162,19 +217,24 @@ $("go").onclick = async () => {
 };
 
 function showResult(r){
-  const types = Object.entries(r.columns).map(([c,t]) => `<span class="type">${esc(c)} · ${esc(t)}</span>`).join("");
-  $("result").innerHTML = `<div class="result"><b>✓ ${esc(r.table)}</b> created from <b>${esc(r.dataset)}</b> (${esc(r.split)})
+  const types = Object.entries(r.columns).map(([c,t]) => `<span class="type">${esc(c)} \u00B7 ${esc(t)}</span>`).join("");
+  $("result").innerHTML = `<div class="result"><b>\u2713 ${esc(r.table)}</b> created from <b>${esc(r.dataset)}</b> (${esc(r.split)})
     <div class="stats"><div><strong>${(+r.rows).toLocaleString()}</strong>rows</div>
     <div><strong>${Object.keys(r.columns).length}</strong>columns</div>
-    <div><strong>${r.seconds}s</strong>load time</div></div></div>
-    <div class="hint">Column types</div><div class="types">${types}</div>`;
+    <div><strong>${r.seconds}s</strong>load time</div></div>
+    <div class="hint">Commit <span class="mono" title="${esc(r.commit)}">${esc((r.commit || "").slice(0, 7))}</span>
+      ${r.pinned ? "(pinned)" : r.revision ? `(from ${esc(r.revision)})` : "(latest)"}</div></div>
+    <div class="hint">Column types</div><div class="types">${types}</div>` +
+    Object.entries(r.classLabels || {}).map(([c, names]) =>
+      `<div class="hint">Labels of ${esc(c)}</div><div class="types">${names.map((n, i) =>
+        `<span class="type">${i} \u00B7 ${esc(n)}</span>`).join("")}</div>`).join("");
 }
 
 async function loadPreview(table){
   try {
     const p = await api("/preview/" + encodeURIComponent(table) + "?rows=20");
     $("previewCard").hidden = false;
-    $("previewTitle").textContent = `Preview · ${p.table} · ${(+p.total).toLocaleString()} rows`;
+    $("previewTitle").textContent = `Preview \u00B7 ${p.table} \u00B7 ${(+p.total).toLocaleString()} rows`;
     $("preview").innerHTML = `<table><tr>${p.columns.map(c=>`<th>${esc(c)}</th>`).join("")}</tr>` +
       p.rows.map(r => `<tr>${r.map(v=>`<td title="${esc(v)}">${esc(v)}</td>`).join("")}</tr>`).join("") + `</table>`;
   } catch(e) { /* preview is optional */ }
@@ -185,15 +245,15 @@ async function loadHistory(){
     const h = await api("/history");
     if (!h.length) return;
     $("history").innerHTML = `<table><tr><th>When</th><th>Dataset</th><th>Split</th><th>Table</th><th>Rows</th><th>Time</th><th></th></tr>` +
-      h.map(x => `<tr><td>${esc(x.createdAt)}</td><td class="mono">${esc(x.dataset)}</td><td>${esc(x.split)}</td>
+      h.map(x => `<tr><td>${esc(x.createdAt)}</td><td class="mono" title="${x.commit ? "commit " + esc(x.commit) : ""}">${esc(x.dataset)}${x.commit ? ` <span class="hint">@${esc(x.commit.slice(0, 7))}</span>` : ""}</td><td>${esc(x.split)}</td>
         <td>${x.status==="OK" ? `<span class="link" data-t="${esc(x.table)}">${esc(x.table)}</span>` : esc(x.table)}</td>
-        <td>${x.rows ? (+x.rows).toLocaleString() : "—"}</td><td>${x.seconds ? x.seconds+"s" : "—"}</td>
+        <td>${x.rows ? (+x.rows).toLocaleString() : "\u2014"}</td><td>${x.seconds ? x.seconds+"s" : "\u2014"}</td>
         <td><span class="badge ${x.status}" title="${esc(x.message)}">${x.status}</span></td></tr>`).join("") + `</table>`;
     $("history").querySelectorAll(".link").forEach(l => l.onclick = () => loadPreview(l.dataset.t));
   } catch(e) {}
 }
 
-oneLiner(); loadHistory();
+oneLiner(); showUser(); loadHistory();
 </script>
 </body>
 </html>

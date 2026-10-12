@@ -21,7 +21,7 @@ ClassMethod Info() As %Status
     set ds = $get(%request.Data("dataset", 1))
     if ds = "" quit ..JsonError(400, "dataset is required")
     try { write ##class(dc.hf2iris.Loader).Info(ds).%ToJSON() }
-    catch ex { return ..JsonError(502, $system.Status.GetErrorText(ex.AsStatus())) }
+    catch ex { return ..JsonError(400, ##class(dc.hf2iris.Loader).ErrorText(ex)) }
     quit $$$OK
 }
 
@@ -30,9 +30,9 @@ ClassMethod Load() As %Status
     set b = {}.%FromJSON(%request.Content)
     if b.dataset = "" quit ..JsonError(400, "dataset is required")
     try {
-        set r = ##class(dc.hf2iris.Loader).LoadQuiet(b.dataset, b.table, b.split, +b.limit, b.config, b.mode)
+        set r = ##class(dc.hf2iris.Loader).LoadQuiet(b.dataset, b.table, b.split, +b.limit, b.config, b.mode, b.revision)
         write r.%ToJSON()
-    } catch ex { return ..JsonError(500, $system.Status.GetErrorText(ex.AsStatus())) }
+    } catch ex { return ..JsonError(400, ##class(dc.hf2iris.Loader).ErrorText(ex)) }
     quit $$$OK
 }
 
@@ -40,12 +40,13 @@ ClassMethod History() As %Status
 {
     set out = []
     set rs = ##class(%SQL.Statement).%ExecDirect(,
-        "SELECT TOP 50 ID, Dataset, Config, Split, TableName, RowCount, Seconds, Status, Message, CreatedAt "_
+        "SELECT TOP 50 ID, Dataset, Config, Split, TableName, RowCount, Seconds, Status, Message, CreatedAt, Revision, CommitHash "_
         "FROM dc_hf2iris.ImportLog ORDER BY ID DESC")
     while rs.%Next() {
         do out.%Push({"id":(rs.ID),"dataset":(rs.Dataset),"config":(rs.Config),"split":(rs.Split),
             "table":(rs.TableName),"rows":(rs.RowCount),"seconds":(rs.Seconds),
-            "status":(rs.Status),"message":(rs.Message),"createdAt":(rs.CreatedAt)})
+            "status":(rs.Status),"message":(rs.Message),"createdAt":(rs.CreatedAt),
+            "revision":(rs.Revision),"commit":(rs.CommitHash)})
     }
     write out.%ToJSON()
     quit $$$OK
