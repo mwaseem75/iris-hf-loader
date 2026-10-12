@@ -1,3 +1,5 @@
-datasets>=2.19
+# ranges for IPM installs; the Docker image pins exact versions in constraints.txt
+datasets>=2.19,<6
+huggingface_hub>=0.23,<3
 pandas>=2.0
 pyarrow>=14

@@ -4,8 +4,20 @@ services:
       context: .
       dockerfile: Dockerfile
     restart: always
+    # local only: default _SYSTEM / SYS password
     ports:
-      - 1972
-      - 52773:52773
+      - "127.0.0.1:${IRIS_SQL_PORT:-1972}:1972"
+      - "127.0.0.1:${IRIS_WEB_PORT:-52773}:52773"
+    # passed through when set on the host
+    environment:
+      - HF_TOKEN
+      - HF2IRIS_MAX_ROWS
+      - HF2IRIS_MAX_DOWNLOAD_MB
+      - HF2IRIS_EXACT
+    healthcheck:
+      test: ["CMD", "/irisHealth.sh"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
     volumes:
       - ./:/home/irisowner/dev
