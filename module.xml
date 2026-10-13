@@ -3,7 +3,7 @@
   <Document name="iris-hf-loader.ZPM">
     <Module>
       <Name>iris-hf-loader</Name>
-      <Version>1.0.0</Version>
+      <Version>1.1.0</Version>
       <Description>Load any Hugging Face dataset into an InterSystems IRIS table with one line of code or one click.</Description>
       <Keywords>huggingface,datasets,python,import,ai</Keywords>
       <Packaging>module</Packaging>

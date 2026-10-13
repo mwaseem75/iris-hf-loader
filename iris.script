@@ -3,5 +3,6 @@
  // CallIn, for irispython
  set p("Enabled") = 1, sc = ##class(Security.Services).Modify("%Service_CallIn", .p) if 'sc { write $system.Status.GetErrorText(sc), ! do $system.Process.Terminate(, 1) }
  zn "USER"
- zpm "load /home/irisowner/dev/ -v":1:1
+ // Python packages come from the Dockerfile (pinned); IPM must not install them again
+ zpm "load /home/irisowner/dev/ -v -bypass-py-deps":1:1
  halt
