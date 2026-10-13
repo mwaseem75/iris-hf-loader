@@ -6,21 +6,10 @@
 ![InterSystems IRIS 2023.1+](https://img.shields.io/badge/InterSystems%20IRIS-2023.1%2B-1f6feb)
 ![Version 1.1.0](https://img.shields.io/badge/version-1.1.0-informational)
 
-> **[Screenshot: `docs/screenshots/explore.png`]**
-> The Explore page with search results for "imdb".
-
-Built for the InterSystems Community Bounty, idea [DPI-I-543](https://ideas.intersystems.com/ideas/DPI-I-543) "Load Datasets from Hugging Face into IRIS".
-
-```objectscript
-do ##class(dc.hf2iris.Loader).Load("stanfordnlp/imdb", "Demo.IMDB", "test", 1000)
-```
-
-```sql
-SELECT dc_hf2iris.load_dataset('stanfordnlp/imdb', 'Demo.IMDB', 'test', 1000)
-```
+<img width="1440" alt="image" src="https://github.com/user-attachments/assets/195c75d4-3a27-41e8-87a5-94cc05800582" />
+The Explore page with search results for "imdb".
 
 ## Contents
-
 - [Features](#features)
 - [Quick start](#quick-start)
 - [Tutorial](#tutorial)
@@ -105,8 +94,6 @@ cd iris-hf-loader
 docker compose up -d --build --wait
 ```
 
-On older Docker installations the command is `docker-compose` with a dash.
-
 The first build takes a few minutes. It downloads the IRIS image and installs the Python libraries for embedded Python (`datasets`, `pandas`, `pyarrow`). `--wait` returns when IRIS is up and the package is installed in the `USER` namespace.
 
 The container listens on your own machine only:
@@ -131,8 +118,8 @@ The **Explore** page starts with the most downloaded datasets on the Hub. Type `
 
 Each card shows the dataset id, a short description, its task, size and license, the number of downloads and likes, and when it was last updated. A yellow **Gated** badge means the dataset needs a token (see [step 12](#12-gated-and-private-datasets)).
 
-> **[Screenshot: `docs/screenshots/explore.png`]**
-> Search results for "imdb" on the Explore page.
+<img width="1440" alt="image" src="https://github.com/user-attachments/assets/195c75d4-3a27-41e8-87a5-94cc05800582" />
+Search results for "imdb" on the Explore page.
 
 ### 3. Look inside a dataset
 
@@ -144,11 +131,11 @@ Pick a **Config** and a **Split**; each split shows its row count and size. Then
 - **Preview** shows the actual rows, 20 per page, with **Previous** and **Next**. Long texts are shortened (hover over a cell to read more) and media cells show `[image]` or `[audio]`. Nothing is imported or downloaded into IRIS for this.
 - **Schema** lists every column with its Hugging Face type next to the IRIS column name and type that an import would create.
 
-> **[Screenshot: `docs/screenshots/dataset-preview.png`]**
-> The Preview tab of `openai/gsm8k` with the import panel on the right.
+<img width="1440" alt="image" src="https://github.com/user-attachments/assets/496a82f0-7730-4ace-9661-d91b5fa8d059" />
+The Preview tab of `openai/gsm8k` with the import panel on the right.
 
-> **[Screenshot: `docs/screenshots/dataset-schema.png`]**
-> The Schema tab: Hugging Face types next to the planned IRIS columns.
+<img width="1440" alt="image" src="https://github.com/user-attachments/assets/07b367e2-2798-4043-8ca1-ce544380d670" />
+The Schema tab: Hugging Face types next to the planned IRIS columns.
 
 The tabs work with the keyboard too: the arrow keys, Home and End move between them.
 
@@ -168,8 +155,8 @@ Click **Review plan**. Nothing is written yet. The plan says whether the table w
 
 Click **Start import**. The import runs in the background inside IRIS, and the panel follows it: "Looking up the dataset", "Downloading rows from Hugging Face", then "Writing rows to IRIS" with a progress bar. **Cancel import** stops it before the next batch of rows; a cancelled import leaves nothing behind. When it is done, the panel links to the new table.
 
-> **[Screenshot: `docs/screenshots/import-progress.png`]**
-> An import running in the background, with its progress and the Cancel button.
+<img width="1440" alt="import-progress" src="https://github.com/user-attachments/assets/667b7a12-2dfb-4815-9058-a46e412cf7d3" />
+An import running in the background, with its progress and the Cancel button.
 
 Under the panel, **Same import in ObjectScript or SQL** shows the one-line command for exactly this import, with copy buttons.
 
@@ -182,8 +169,8 @@ Open **Imports** in the side menu.
 - **Background imports** lists the recent background imports with their state (running, ok, error, cancelled or interrupted), who started them and when. Running imports show their progress and a **Cancel** button, and the page updates itself while something runs. Open a finished import to see its columns, commit and label names, or the full error message.
 - **Import history** lists the last 50 imports from every source: this page, the REST API, SQL and ObjectScript. Filter it by status or by dataset and table name. Dataset and table names link to their pages.
 
-> **[Screenshot: `docs/screenshots/imports.png`]**
-> The Imports page with a finished background import and the import history.
+<img width="1440"  alt="image" src="https://github.com/user-attachments/assets/4dadf974-ceee-4dd8-8cad-b5061da973d3" />
+The Imports page with a finished background import and the import history.
 
 ### 6. Work with the imported tables
 
@@ -197,8 +184,8 @@ Click a table to open it:
 
 **Copy SELECT** copies a ready-made query. **Re-import** opens the dataset page with the same config, split and table filled in, which is the quickest way to refresh a table.
 
-> **[Screenshot: `docs/screenshots/table-detail.png`]**
-> The `Demo.IMDB` table with its rows, columns and imports.
+<img width="1440" alt="image" src="https://github.com/user-attachments/assets/492c408c-7861-4d7b-bb1c-a8f049bfad31" />
+The `Demo.IMDB` table with its rows, columns and imports.
 
 ### 7. Query the table with SQL
 
@@ -375,13 +362,12 @@ load_dataframe(df, "Demo.Mine", IrisSQL())
 
 The button in the top bar switches between the dark and the light theme; the choice is remembered. Both themes meet the WCAG contrast guidelines.
 
-> **[Screenshot: `docs/screenshots/light-theme.png`]**
-> A dataset page in the light theme.
+<img width="1440" alt="image" src="https://github.com/user-attachments/assets/3e7e981a-65f7-413b-a843-d3fe4d547507" />
+A dataset page in the light theme.
 
 On a phone the side menu becomes a bar under the top bar, results show in one column, and the import panel moves below the dataset with a **Jump to import** button.
-
-> **[Screenshot: `docs/screenshots/phone-explore.png`]**
-> The Explore page on a phone. This image is tall; show it at about 260 pixels wide.
+<img width="780" alt="image" src="https://github.com/user-attachments/assets/4b7aa1b0-4fd3-409b-b706-df037418a8ae" />
+The Explore page on a phone. This image is tall; show it at about 260 pixels wide.
 
 ## Installing with IPM
 
