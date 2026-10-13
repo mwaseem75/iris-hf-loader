@@ -29,6 +29,22 @@ class LoadError(ValueError):
     """Expected failure; the message is shown to the user as is."""
 
 
+class SplitNotFound(LoadError):
+    pass
+
+
+class LimitExceeded(LoadError):
+    """A full load over HF2IRIS_MAX_ROWS / HF2IRIS_MAX_DOWNLOAD_MB."""
+
+
+class TableConflict(LoadError):
+    """The target table exists and may not be changed (mode 'fail', or not ours)."""
+
+
+class Cancelled(LoadError):
+    pass
+
+
 RESERVED = set("""
 add all alter and any as asc between by case cast check column constraint count
 create cross current date default delete desc distinct drop else end escape exists
@@ -191,7 +207,7 @@ def sql_column(arr):
 def fit_rows(columns):
     """Move the widest VARCHAR columns to LONGVARCHAR until every row fits ROW_BUDGET."""
     text = [c for c in columns if c.sql_type.startswith("VARCHAR")]
-    if not text:
+    if not text or not len(text[0].lengths):
         return
     totals = sum(c.lengths for c in text)
     while text and int(totals.max()) > ROW_BUDGET:
@@ -275,6 +291,12 @@ class IrisSQL:
         except Exception:  # no ImportLog outside the IPM module
             return False
 
+    def columns(self, table):
+        schema, name = table.split(".", 1)
+        rs = self.execute("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = ? "
+                          "AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION", schema, name)
+        return [r[0] for r in rs]
+
     def mark_owned(self, table):
         self.iris.gref("^dc.hf2iris.Owned")[table.upper()] = 1
 
@@ -297,20 +319,36 @@ def build_ddl(table, data, text_collation=""):
     return f"CREATE TABLE {table} (\n  {body}\n)", cols, columns
 
 
-def load_dataframe(df, table, db, mode="replace", batch_size=1000, log=print):
+def target_table(name, table=None):
+    """The table an import of dataset `name` writes to."""
+    return safe_table(table or name.split("/")[-1])
+
+
+def check_target(table, db, mode):
+    """(exists, owned) for the target, or TableConflict if it may not be changed."""
+    if mode not in MODES:
+        raise LoadError(f"mode must be one of {', '.join(MODES)}, not {mode!r}")
+    exists = db.table_exists(table)
+    owned = exists and db.owns_table(table)
+    if exists and mode == "fail":
+        raise TableConflict(f"Table {table} already exists (mode 'fail')")
+    if exists and not owned:
+        raise TableConflict(f"Table {table} already exists and was not created by hf2iris, so it "
+                            f"is not replaced or appended to. Choose another table name.")
+    return exists, owned
+
+
+def load_dataframe(df, table, db, mode="replace", batch_size=1000, log=print,
+                   progress=None, cancelled=None):
     """Create (or replace/append) `table` from a pandas DataFrame or pyarrow
-    Table and insert all rows."""
+    Table and insert all rows. progress(phase, done, total) is called per batch;
+    cancelled() is checked before each batch."""
     if mode not in MODES:
         raise LoadError(f"mode must be one of {', '.join(MODES)}, not {mode!r}")
     table = safe_table(table)
     ddl, cols, columns = build_ddl(table, df, getattr(db, "text_collation", ""))
 
-    exists = exists_before = db.table_exists(table)
-    if exists and mode == "fail":
-        raise LoadError(f"Table {table} already exists (mode 'fail')")
-    if exists and not db.owns_table(table):
-        raise LoadError(f"Table {table} already exists and was not created by hf2iris, so it is "
-                        f"not replaced or appended to. Choose another table name.")
+    exists = exists_before = check_target(table, db, mode)[0]
     if exists and mode == "replace":
         db.execute(f"DROP TABLE {table}")
         exists = False
@@ -324,12 +362,17 @@ def load_dataframe(df, table, db, mode="replace", batch_size=1000, log=print):
     t0, total = time.time(), len(columns[0].values)
     count = lambda: list(db.execute(f"SELECT COUNT(*) FROM {table}"))[0][0]
     before = 0 if created else count()
+    progress = progress or (lambda *a: None)
     db.begin()
     try:
+        progress("inserting", 0, total)
         for start in range(0, total, batch_size):
+            if cancelled and cancelled():
+                raise Cancelled("Import cancelled")
             rows = list(zip(*(c.values[start:start + batch_size] for c in columns)))
             db.executemany(ins, rows, start + 1)
             log(f"  {min(start + batch_size, total):,}/{total:,} rows")
+            progress("inserting", min(start + batch_size, total), total)
         arrived = count() - before
         if arrived != total:
             raise LoadError(f"{total:,} rows were read but {arrived:,} arrived in {table}")
@@ -343,7 +386,7 @@ def load_dataframe(df, table, db, mode="replace", batch_size=1000, log=print):
             note = f" {table} was removed." if replaced else f" {table} was not created."
         else:
             note = f" The rows of this import were rolled back; {table} is unchanged."
-        raise LoadError(error_text(e) + note) from e
+        raise (Cancelled if isinstance(e, Cancelled) else LoadError)(error_text(e) + note) from e
     secs = round(time.time() - t0, 2)
     types = {c: col.sql_type for c, col in zip(cols, columns)}
     return {"table": table, "rows": total, "columns": types, "seconds": secs, "ddl": ddl}
@@ -369,10 +412,27 @@ def check_split(name, split, config, limit, revision=None, builder=None, latest=
     splits = builder.info.splits or {}
     available = list(splits) or list(builder.config.data_files or {})
     if available and split not in available:
-        raise LoadError(f"Split {split!r} not found in {name} (config {builder.config.name!r}). "
-                        f"Available splits: {', '.join(available)}")
+        raise SplitNotFound(f"Split {split!r} not found in {name} (config {builder.config.name!r}). "
+                            f"Available splits: {', '.join(available)}")
     if limit:
         return builder           # limited loads stream
+    check_limits(split, *estimate(builder, name, split, config, revision, latest, file_size))
+    return builder
+
+
+def check_limits(split, rows, size):
+    if rows and rows > MAX_ROWS:
+        raise LimitExceeded(f"Split {split!r} has {rows:,} rows, more than the {MAX_ROWS:,} row "
+                            f"limit for a full load. Set a row limit, or raise HF2IRIS_MAX_ROWS.")
+    if size and size > MAX_DOWNLOAD_MB * 2 ** 20:
+        raise LimitExceeded(f"Loading all rows downloads about {size / 2 ** 20:,.0f} MB, more "
+                            f"than the {MAX_DOWNLOAD_MB:,} MB limit. Set a row limit, or raise "
+                            f"HF2IRIS_MAX_DOWNLOAD_MB.")
+
+
+def estimate(builder, name, split, config=None, revision=None, latest=None, file_size=None):
+    """(rows of the split, bytes a full load downloads); None where unknown."""
+    splits = builder.info.splits or {}
     rows = getattr(splits.get(split), "num_examples", None)
     size = builder.info.download_size
     if (rows is None or size is None) and revision:
@@ -390,22 +450,15 @@ def check_split(name, split, config, limit, revision=None, builder=None, latest=
         # load_dataset downloads every split of the config
         files = [f for fs in (builder.config.data_files or {}).values() for f in fs]
         if len(files) > MAX_SIZE_FILES:
-            raise LoadError(f"{name} has {len(files):,} data files, too many for a full load. "
-                            f"Set a row limit.")
+            raise LimitExceeded(f"{name} has {len(files):,} data files, too many for a full "
+                                f"load. Set a row limit.")
         if files:
             if file_size is None:
                 from huggingface_hub import HfFileSystem
                 fs = HfFileSystem()
                 file_size = lambda f: fs.info(f)["size"]
             size = sum(file_size(f) for f in files)
-    if rows and rows > MAX_ROWS:
-        raise LoadError(f"Split {split!r} has {rows:,} rows, more than the {MAX_ROWS:,} row limit "
-                        f"for a full load. Set a row limit, or raise HF2IRIS_MAX_ROWS.")
-    if size and size > MAX_DOWNLOAD_MB * 2 ** 20:
-        raise LoadError(f"Loading all rows downloads about {size / 2 ** 20:,.0f} MB, more than "
-                        f"the {MAX_DOWNLOAD_MB:,} MB limit. Set a row limit, or raise "
-                        f"HF2IRIS_MAX_DOWNLOAD_MB.")
-    return builder
+    return rows, size
 
 
 def resolve_commit(name, revision=None, lookup=None):
@@ -503,19 +556,31 @@ def _error_text(e):
 
 
 def load(name, table=None, split="train", config=None, limit=None,
-         mode="replace", batch_size=1000, db=None, log=print, revision=None):
+         mode="replace", batch_size=1000, db=None, log=print, revision=None,
+         progress=None, cancelled=None):
     """One line: hf2iris.load("stanfordnlp/imdb", "Demo.IMDB", limit=1000).
-    revision: branch, tag or commit hash."""
+    revision: branch, tag or commit hash. progress / cancelled: see load_dataframe."""
     db = db or IrisSQL()
     table = table or name.split("/")[-1]
+    progress = progress or (lambda *a: None)
+
+    def check_cancel():
+        if cancelled and cancelled():
+            raise Cancelled("Import cancelled")
+
+    progress("resolving", 0, 0)
     repo = resolve_name(name)
     commit = resolve_commit(repo, revision)
+    check_cancel()
     log(f"Fetching {repo} [{config or 'default'}:{split}] @ {commit[:7]}"
         + (f" limit {limit}" if limit else ""))
+    progress("fetching", 0, 0)
     ds = fetch_split(repo, split, config, limit, commit)
+    check_cancel()
     labels = label_names(ds.features)
     data = add_label_names(ds.with_format("arrow")[:], labels)
-    result = load_dataframe(data, table, db, mode, batch_size, log)
+    result = load_dataframe(data, table, db, mode, batch_size, log, progress, cancelled)
+    progress("finishing", result["rows"], result["rows"])
     result.update({"dataset": name, "split": split, "config": config,
                    "revision": revision or None, "commit": commit,
                    "pinned": bool(COMMIT.fullmatch(revision or ""))})
@@ -528,9 +593,16 @@ def load(name, table=None, split="train", config=None, limit=None,
 
 def info(name):
     """List configs and splits for a dataset, without downloading data."""
+    name = resolve_name(name)
+    try:                      # one call to the dataset viewer instead of one per config
+        from . import hub
+        found = hub.splits(name)
+    except Exception:
+        found = None
+    if found:
+        return {"dataset": name, "configs": dict(list(found.items())[:20])}
     from datasets import disable_progress_bars, get_dataset_config_names, get_dataset_split_names
     disable_progress_bars()
-    name = resolve_name(name)
     configs = get_dataset_config_names(name)
     out = {}
     for c in configs[:20]:

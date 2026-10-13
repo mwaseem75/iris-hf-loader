@@ -56,6 +56,13 @@ ClassMethod SqlInfo(dataset As %String(MAXLEN="") = "") As %String(MAXLEN="") [ 
     quit r.%ToJSON()
 }
 
+/// Import plan (dry run): what Load would create, as JSON. Nothing is written and no
+/// data files are downloaded. args: {dataset, table, split, limit, config, mode, revision}
+ClassMethod Plan(args As %DynamicObject) As %String
+{
+    quit ..PlanPy(args.%ToJSON())
+}
+
 /// List configs and splits of a dataset without downloading the data.
 ClassMethod Info(dataset As %String) As %DynamicObject
 {
@@ -78,31 +85,66 @@ ClassMethod Arg(v As %String) As %String [ Internal ]
     quit $select(v = $char(0):"", 1:$zstrip(v, "<>W"))
 }
 
-ClassMethod Run(dataset, table, split, limit, config, mode, revision, verbose) As %DynamicObject [ Internal ]
+/// The import behind Load, LoadQuiet, SqlLoad and background jobs. Only one import at a
+/// time may write to a table. jobId: report progress to dc.hf2iris.Job and honour cancel.
+ClassMethod Run(dataset, table, split, limit, config, mode, revision, verbose, jobId As %String = "", Output logId As %String, Output cancelled As %Boolean) As %DynamicObject [ Internal ]
 {
     set:split="" split = "train"
     set:mode="" mode = "replace"
+    set (logId, locked) = "", cancelled = 0
     try {
         if $zstrip(dataset, "<>W") = "" $$$ThrowStatus($$$ERROR($$$GeneralError, "dataset is required"))
-        set result = {}.%FromJSON(..LoadPy(dataset, table, split, +limit, config, mode, revision, verbose))
-        if result.error '= "" $$$ThrowStatus($$$ERROR($$$GeneralError, result.error))
-        do ##class(dc.hf2iris.ImportLog).Record(result, "OK", "")
+        set target = ..TargetPy(dataset, table)
+        lock +^dc.hf2iris.Table($zconvert(target, "U")):0
+        if '$test $$$ThrowStatus($$$ERROR($$$GeneralError, "Another import into "_target_" is running. Try again when it has finished."))
+        set locked = $zconvert(target, "U")
+        set result = {}.%FromJSON(..LoadPy(dataset, table, split, +limit, config, mode, revision, verbose, jobId))
+        if result.error '= "" {
+            set cancelled = +result.cancelled
+            $$$ThrowStatus($$$ERROR($$$GeneralError, result.error))
+        }
+        do ##class(dc.hf2iris.ImportLog).Record(result, "OK", "", .logId)
     } catch ex {
-        do ##class(dc.hf2iris.ImportLog).Record({"dataset":(dataset),"config":(config),"split":(split),"table":(table),"revision":(revision)}, "ERROR", ..ErrorText(ex))
+        do ##class(dc.hf2iris.ImportLog).Record({"dataset":(dataset),"config":(config),"split":(split),"table":(table),"revision":(revision)}, "ERROR", ..ErrorText(ex), .logId)
+        lock:locked'="" -^dc.hf2iris.Table(locked)
         throw ex
     }
+    lock -^dc.hf2iris.Table(locked)
     quit result
 }
 
-ClassMethod LoadPy(dataset, table, split, limit, config, mode, revision, verbose) As %String [ Language = python ]
+ClassMethod TargetPy(dataset, table) As %String [ Internal, Language = python ]
+{
+from hf2iris import loader
+return loader.target_table(dataset, table or None)
+}
+
+ClassMethod PlanPy(args As %String) As %String [ Internal, Language = python ]
+{
+from hf2iris import plan
+return plan.call(args)
+}
+
+ClassMethod LoadPy(dataset, table, split, limit, config, mode, revision, verbose, jobId = "") As %String [ Language = python ]
 {
 import json, hf2iris
 log = print if verbose else (lambda *a: None)
+progress = cancelled = None
+if jobId:
+    import iris
+    job = iris.cls("dc.hf2iris.Job")
+
+    def progress(phase, done=0, total=0):
+        job.Progress(jobId, phase, done or 0, total or 0)
+
+    def cancelled():
+        return bool(job.IsCancelled(jobId))
 try:
     r = hf2iris.load(dataset, table or None, split or "train", config or None,
-                     int(limit or 0) or None, mode or "replace", log=log, revision=revision or None)
+                     int(limit or 0) or None, mode or "replace", log=log, revision=revision or None,
+                     progress=progress, cancelled=cancelled)
 except Exception as e:
-    r = {"error": hf2iris.error_text(e)}
+    r = {"error": hf2iris.error_text(e), "cancelled": isinstance(e, hf2iris.loader.Cancelled)}
 return json.dumps(r, default=str)
 }
 

@@ -33,8 +33,9 @@ Property CreatedAt As %TimeStamp [ InitialExpression = {$zdatetime($horolog,3)} 
 
 Index TableIdx On TableName;
 
-ClassMethod Record(r As %DynamicObject, status As %String, msg As %String) As %Status
+ClassMethod Record(r As %DynamicObject, status As %String, msg As %String, Output id As %String) As %Status
 {
+    set id = ""
     set o = ..%New()
     set o.Dataset = r.dataset, o.Config = r.config, o.Split = r.split
     set o.Revision = r.revision, o.CommitHash = r.commit
@@ -42,7 +43,9 @@ ClassMethod Record(r As %DynamicObject, status As %String, msg As %String) As %S
     set o.Status = status, o.Message = $extract(msg, 1, 2000)
     set:$isobject(r.columns) o.ColumnsJSON = r.columns.%ToJSON()
     set:$isobject(r.classLabels) o.ClassLabels = r.classLabels.%ToJSON()
-    quit o.%Save()
+    set sc = o.%Save()
+    set:$$$ISOK(sc) id = o.%Id()
+    quit sc
 }
 
 /// Only tables created by this tool may be previewed through the API.
