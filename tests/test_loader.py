@@ -358,3 +358,39 @@ def test_token_is_masked(monkeypatch):
     monkeypatch.setenv("HF_TOKEN", "hf_SecretValue123")
     assert error_text(RuntimeError("401 for token hf_SecretValue123")) == "RuntimeError: 401 for token ***"
     assert error_text(LoadError("bad hf_SecretValue123")) == "bad ***"
+
+
+def test_progress_and_cancel():
+    seen = []
+    db = SqliteDB()
+    load_dataframe(sample(), "Demo.P", db, batch_size=3, log=lambda *_: None,
+                   progress=lambda *a: seen.append(a))
+    assert seen == [("inserting", 0, 4), ("inserting", 3, 4), ("inserting", 4, 4)]
+    from hf2iris.loader import Cancelled
+    calls = iter([False, True])
+    with pytest.raises(Cancelled, match="Import cancelled.*rolled back"):
+        load_dataframe(sample(), "Demo.P", db, mode="append", batch_size=3, log=lambda *_: None,
+                       cancelled=lambda: next(calls))
+    assert db.execute("select count(*) from Demo.P").fetchone()[0] == 4      # first batch undone
+
+
+def test_empty_table_loads():
+    import pyarrow as pa
+    db = SqliteDB()
+    r = load_dataframe(pa.table({"t": pa.array([], pa.string())}), "Demo.Empty", db, log=lambda *_: None)
+    assert r["rows"] == 0 and r["columns"] == {"t": "VARCHAR(4000)"}
+
+
+def test_target_and_limits():
+    from hf2iris.loader import target_table, check_target, check_limits, LimitExceeded, TableConflict
+    assert target_table("stanfordnlp/imdb") == "HF.imdb" and target_table("x/y", "Demo.T") == "Demo.T"
+    db = SqliteDB()
+    assert check_target("Demo.New", db, "fail") == (False, False)
+    db.execute("CREATE TABLE Demo.Other (a INT)")
+    with pytest.raises(TableConflict):
+        check_target("Demo.Other", db, "append")
+    with pytest.raises(LoadError, match="mode"):
+        check_target("Demo.Other", db, "bogus")
+    check_limits("train", 10, 10)
+    with pytest.raises(LimitExceeded, match="row limit"):
+        check_limits("train", 10 ** 9, None)
