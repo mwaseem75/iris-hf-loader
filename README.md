@@ -358,16 +358,13 @@ from hf2iris.loader import IrisSQL, load_dataframe
 load_dataframe(df, "Demo.Mine", IrisSQL())
 ```
 
-### 15. Themes and phones
+### 15. Themes 
 
 The button in the top bar switches between the dark and the light theme; the choice is remembered. Both themes meet the WCAG contrast guidelines.
-
 <img width="1440" alt="image" src="https://github.com/user-attachments/assets/3e7e981a-65f7-413b-a843-d3fe4d547507" />
 A dataset page in the light theme.
 
-On a phone the side menu becomes a bar under the top bar, results show in one column, and the import panel moves below the dataset with a **Jump to import** button.
-<img width="780" alt="image" src="https://github.com/user-attachments/assets/4b7aa1b0-4fd3-409b-b706-df037418a8ae" />
-The Explore page on a phone. This image is tall; show it at about 260 pixels wide.
+
 
 ## Installing with IPM
 
