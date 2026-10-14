@@ -17,3 +17,14 @@ jobs:
           node-version: "24"
       - run: node --test tests/ui/state.test.mjs
       - run: node tests/ui/mocked.mjs
+
+  # The Docker image builds even from a checkout with Windows line endings (CRLF),
+  # the worst case for a Windows user whose git ignores .gitattributes.
+  docker-build-crlf:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          git ls-files -z | xargs -0 file | grep -E ':.*text' | cut -d: -f1 | xargs sed -i 's/$/\r/'
+          file constraints.txt iris.script Dockerfile
+      - run: docker build -t iris-hf-loader-ci .

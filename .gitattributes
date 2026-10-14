@@ -1,0 +1,8 @@
+# Check out text files with LF on every OS. With Windows line endings the Docker
+# build and the bash test scripts fail (Git for Windows converts to CRLF by default).
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
